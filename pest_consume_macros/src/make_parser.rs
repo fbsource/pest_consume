@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::iter;
 
 use quote::quote;
@@ -139,13 +139,13 @@ impl Parse for PrecClimbArgs {
 
 fn collect_aliases(
     imp: &mut ItemImpl,
-) -> Result<HashMap<Ident, Vec<AliasSrc>>> {
+) -> Result<BTreeMap<Ident, Vec<AliasSrc>>> {
     let functions = imp.items.iter_mut().flat_map(|item| match item {
         ImplItem::Method(m) => Some(m),
         _ => None,
     });
 
-    let mut alias_map = HashMap::new();
+    let mut alias_map = BTreeMap::new();
     for function in functions {
         let fn_name = function.sig.ident.clone();
         let mut alias_attrs = function
@@ -204,7 +204,7 @@ fn extract_ident_argument(input_arg: &FnArg) -> Result<Ident> {
 
 fn parse_fn<'a>(
     function: &'a mut ImplItemMethod,
-    alias_map: &mut HashMap<Ident, Vec<AliasSrc>>,
+    alias_map: &mut BTreeMap<Ident, Vec<AliasSrc>>,
 ) -> Result<ParsedFn<'a>> {
     if function.sig.inputs.len() != 1 {
         return Err(Error::new(
@@ -355,7 +355,7 @@ pub fn make_parser(
         })
         .collect();
 
-    let fn_map: HashMap<Ident, ParsedFn> = imp
+    let fn_map: BTreeMap<Ident, ParsedFn> = imp
         .items
         .iter_mut()
         .flat_map(|item| match item {
@@ -439,4 +439,69 @@ pub fn make_parser(
 
         #imp
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alias_map_keys_are_sorted() {
+        let mut imp: ItemImpl = syn::parse_quote! {
+            impl MyParser {
+                fn zebra(input: Node) -> Result<()> { Ok(()) }
+                fn mango(input: Node) -> Result<()> { Ok(()) }
+                fn apple(input: Node) -> Result<()> { Ok(()) }
+            }
+        };
+
+        let alias_map = collect_aliases(&mut imp).unwrap();
+        let keys: Vec<String> =
+            alias_map.keys().map(|k| k.to_string()).collect();
+        assert_eq!(keys, vec!["apple", "mango", "zebra"]);
+    }
+
+    #[test]
+    fn alias_map_with_aliases_is_sorted() {
+        let mut imp: ItemImpl = syn::parse_quote! {
+            impl MyParser {
+                fn zebra(input: Node) -> Result<()> { Ok(()) }
+                #[alias(common)]
+                fn mango(input: Node) -> Result<()> { Ok(()) }
+                #[alias(common)]
+                fn apple(input: Node) -> Result<()> { Ok(()) }
+            }
+        };
+
+        let alias_map = collect_aliases(&mut imp).unwrap();
+        let keys: Vec<String> =
+            alias_map.keys().map(|k| k.to_string()).collect();
+        assert_eq!(keys, vec!["common", "zebra"]);
+    }
+
+    #[test]
+    fn generated_branches_are_sorted() {
+        let mut imp: ItemImpl = syn::parse_quote! {
+            impl MyParser {
+                fn zebra(input: Node) -> Result<()> { Ok(()) }
+                fn mango(input: Node) -> Result<()> { Ok(()) }
+                fn apple(input: Node) -> Result<()> { Ok(()) }
+                fn banana(input: Node) -> Result<()> { Ok(()) }
+            }
+        };
+
+        let alias_map = collect_aliases(&mut imp).unwrap();
+
+        let variants: Vec<String> =
+            alias_map.iter().map(|(tgt, _)| tgt.to_string()).collect();
+        assert_eq!(variants, vec!["apple", "banana", "mango", "zebra"],);
+
+        let branch_keys: Vec<String> = alias_map
+            .iter()
+            .flat_map(|(tgt, srcs)| {
+                std::iter::repeat(tgt.to_string()).take(srcs.len())
+            })
+            .collect();
+        assert_eq!(branch_keys, vec!["apple", "banana", "mango", "zebra"],);
+    }
 }
